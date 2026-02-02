@@ -1,3 +1,4 @@
+from networkx import from_prufer_sequence, tadpole_graph
 import torch
 import torch.nn as nn
 
@@ -106,3 +107,64 @@ class Encoder(nn.Module):
             out = layer(out, out, out, mask)
         
         return out
+    
+
+class DecoderBlock(nn.Module):
+    def __init__(self, embed_size, heads, forward_expansion, dropout, device):
+        super(DecoderBlock, self).__init__()
+
+        self.attention = SelfAttention(embed_size, heads)
+        self.norm = nn.LayerNorm(embed_size)
+
+        self.transformer_block = TransformerBlock(
+            embed_size, heads, dropout, forward_expansion
+        )
+
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x, value, key, src_mask, target_mask):
+        attention = self.attention(x, x, x, target_mask)
+        query = self.dropout(self.norm(attention + x))
+
+        out = self.transformer_block(value, key, query, src_mask)
+
+        return out
+    
+class Decoder(nn.Module):
+    def __init__(
+            self,
+            target_vocab_size,
+            embed_size,
+            num_layers,
+            heads, 
+            forward_expansion,
+            dropout,
+            device,
+            max_length
+    ):
+        super(Decoder, self).__init__()
+
+        self.device = device
+        self.word_embedding = nn.Embedding(target_vocab_size, embed_size)
+        self.positional_embedding = nn.Embedding(max_length, embed_size)
+
+        self.layers = nn.ModuleList(
+            [
+                DecoderBlock(embed_size, heads, forward_expansion, dropout, device)
+                for _ in range(num_layers)
+            ]
+        )
+
+        self.fc_out = nn.Linear(embed_size, target_vocab_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, encoder_out, src_mask, target_mask):
+        N, seq_len = x.shape
+        pos = torch.arange(0, seq_len).expand(N, seq_len).to(self.device)
+        
+        x = self.dropout((self.word_embedding(x) + self.positional_embedding(pos)))
+
+        for layer in self.layers:
+            x = layer(x, encoder_out, encoder_out, src_mask, target_mask)
+
+        out = self.fc_out(x)
