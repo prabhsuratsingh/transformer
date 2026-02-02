@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 
@@ -42,6 +43,27 @@ class SelfAttention(nn.Module):
         out = self.fc_out(out)
 
         return out
+    
+class PositionalEncoding(nn.Module):
+    def __init__(self, embed_size, max_length=5000):
+        super().__init__()
+
+        pe = torch.zeros(max_length, embed_size)
+        position = torch.arange(0, max_length).unsqueeze(1)
+
+        div_term = torch.exp(
+            torch.arange(0, embed_size, 2) *
+            (-math.log(10000.0) / embed_size)
+        )
+
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+
+        pe = pe.unsqueeze(0)  
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1)]
 
 class TransformerBlock(nn.Module):
     def __init__(self, embed_size, heads, dropout, forward_expansion):
@@ -85,7 +107,7 @@ class Encoder(nn.Module):
         self.embed_size = embed_size
         self.device = device
         self.word_embedding = nn.Embedding(src_vocab_size, embed_size)
-        self.positional_embedding = nn.Embedding(max_length, embed_size)
+        self.position_encoding = PositionalEncoding(embed_size, max_length)
 
         self.layers = nn.ModuleList(
             [
@@ -104,7 +126,9 @@ class Encoder(nn.Module):
         N, seq_len = x.shape
         pos = torch.arange(0, seq_len).expand(N, seq_len).to(self.device)
 
-        out = self.dropout(self.word_embedding(x) + self.positional_embedding(pos))
+        out = self.dropout(
+            self.position_encoding(self.word_embedding(x))
+        )
 
         for layer in self.layers:
             out = layer(out, out, out, mask)
@@ -149,7 +173,8 @@ class Decoder(nn.Module):
 
         self.device = device
         self.word_embedding = nn.Embedding(target_vocab_size, embed_size)
-        self.positional_embedding = nn.Embedding(max_length, embed_size)
+        self.position_encoding = PositionalEncoding(embed_size, max_length)
+
 
         self.layers = nn.ModuleList(
             [
@@ -165,7 +190,10 @@ class Decoder(nn.Module):
         N, seq_len = x.shape
         pos = torch.arange(0, seq_len).expand(N, seq_len).to(self.device)
         
-        x = self.dropout((self.word_embedding(x) + self.positional_embedding(pos)))
+        x = self.dropout(
+            self.position_encoding(self.word_embedding(x))
+        )
+
 
         for layer in self.layers:
             x = layer(x, encoder_out, encoder_out, src_mask, target_mask)
