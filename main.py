@@ -11,18 +11,22 @@ class SelfAttention(nn.Module):
 
         assert(self.head_dim * heads == embed_size), "Embed size should be divisible by number of heads"
 
-        self.values = nn.Linear(self.head_dim, self.head_dim, bias=False)
-        self.keys = nn.Linear(self.head_dim, self.head_dim, bias=False)
-        self.queries = nn.Linear(self.head_dim, self.head_dim, bias=False)
-        self.fc_out = nn.Linear(heads * self.head_dim, embed_size)
+        self.values = nn.Linear(embed_size, embed_size, bias=False)
+        self.keys = nn.Linear(embed_size, embed_size, bias=False)
+        self.queries = nn.Linear(embed_size, embed_size, bias=False)
+        self.fc_out = nn.Linear(embed_size, embed_size)
 
     def forward(self, values, keys, query, mask):
         N = query.shape[0]
         value_len, key_len, query_len = values.shape[1], keys.shape[1], query.shape[1]
 
+        values = self.values(values)
+        keys = self.keys(keys)
+        queries = self.queries(query)
+
         values = values.reshape(N, value_len, self.heads, self.head_dim)
         keys = keys.reshape(N, key_len, self.heads, self.head_dim)
-        queries = query.reshape(N, query_len, self.heads, self.head_dim)
+        queries = queries.reshape(N, query_len, self.heads, self.head_dim)
 
         QK = torch.einsum("nqhd,nkhd->nhqk", [queries, keys])
 
@@ -83,14 +87,14 @@ class Encoder(nn.Module):
         self.word_embedding = nn.Embedding(src_vocab_size, embed_size)
         self.positional_embedding = nn.Embedding(max_length, embed_size)
 
-        self.layers = nn.Module(
+        self.layers = nn.ModuleList(
             [
                 TransformerBlock(
                     embed_size,
                     heads,
                     dropout,
                     forward_expansion
-                )
+                ) for _ in range(num_layers)
             ]
         )
 
@@ -168,6 +172,8 @@ class Decoder(nn.Module):
 
         out = self.fc_out(x)
 
+        return out
+
 class Transformer(nn.Module):
     def __init__(
             self,
@@ -225,10 +231,30 @@ class Transformer(nn.Module):
     
     def forward(self, src, target):
         src_mask = self.make_src_mask(src)
-        target_mask = self.make_target_mask(src)
+        target_mask = self.make_target_mask(target)
 
         encoder_src = self.encoder(src, src_mask)
 
         out = self.decoder(target, encoder_src, src_mask, target_mask)
 
         return out
+    
+
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    x = torch.tensor([[1, 5, 6, 4, 3, 9, 5, 2, 0], [1, 8, 7, 3, 4, 5, 6, 7, 2]]).to(
+        device
+    )
+    target = torch.tensor([[1, 7, 4, 3, 5, 9, 2, 0], [1, 5, 6, 2, 4, 7, 6, 2]]).to(device)
+
+    src_pad_index = 0
+    target_pad_index = 0
+    src_vocab_size = 10
+    target_vocab_size = 10
+
+    model = Transformer(src_vocab_size, target_vocab_size, src_pad_index, target_pad_index, device=device).to(device)
+
+    out = model(x, target[:, :-1])
+
+    print(out.shape)
